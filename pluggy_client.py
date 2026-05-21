@@ -185,7 +185,26 @@ class PluggyClient:
         Ensure we have a working Item.
         Returns the item dict. Raises PluggyItemNotReadyError if OAuth is needed.
         """
-        # First try saved items
+        # First try ITEM_ID from env
+        env_item_id = os.environ.get("PLUGGY_ITEM_ID")
+        if env_item_id:
+            try:
+                item = self.get_item(env_item_id)
+                status = item.get("status")
+                if status == "UPDATED":
+                    logger.info(f"Using Item from env: {env_item_id}")
+                    return item
+                if status == "WAITING_USER_INPUT":
+                    params = item.get("parameter") or {}
+                    logger.warning(f"Item {env_item_id} from env needs OAuth")
+                    raise PluggyItemNotReadyError(
+                        f"Item {env_item_id} needs OAuth authorization. "
+                        f"Open: {params.get('data', 'N/A')}"
+                    )
+            except Exception as e:
+                logger.warning(f"Item from env failed: {e}")
+
+        # Then try saved items
         saved = self.load_saved_items()
         for s in saved:
             try:
