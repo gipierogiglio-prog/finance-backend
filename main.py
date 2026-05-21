@@ -12,9 +12,16 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from auth import (
+    LoginRequest,
+    LoginResponse,
+    create_access_token,
+    verify_credentials,
+    get_current_user,
+)
 from database import get_db, get_last_sync, init_db
 from models import (
     AccountListResponse,
@@ -125,10 +132,26 @@ async def get_status():
     )
 
 
+# ── Auth ──────────────────────────────────────────────────────────
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+async def login(body: LoginRequest):
+    """Authenticate and receive a JWT Bearer token."""
+    if not verify_credentials(body.username, body.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuário ou senha inválidos",
+        )
+
+    token = create_access_token(body.username)
+    return LoginResponse(access_token=token)
+
+
 # ── Sync ─────────────────────────────────────────────────────────
 
 @app.post("/api/sync", response_model=SyncTriggerResponse)
-async def trigger_sync(lookback_days: int = Query(90, description="Days of transactions to fetch")):
+async def trigger_sync(
+    _user: str = Depends(get_current_user),lookback_days: int = Query(90, description="Days of transactions to fetch")):
     """Manually trigger a full sync with Pluggy."""
     try:
         result = await run_async_sync(lookback_days=lookback_days)
@@ -159,7 +182,9 @@ async def trigger_sync(lookback_days: int = Query(90, description="Days of trans
 
 
 @app.get("/api/sync/status", response_model=SyncStatusResponse)
-async def sync_status():
+async def sync_status(
+    _user: str = Depends(get_current_user),
+):
     """Get current sync status."""
     status = get_sync_status()
     last_sync = status["last_sync"]
@@ -176,7 +201,9 @@ async def sync_status():
 # ── Accounts ─────────────────────────────────────────────────────
 
 @app.get("/api/accounts", response_model=AccountListResponse)
-async def list_accounts():
+async def list_accounts(
+    _user: str = Depends(get_current_user),
+):
     """List all accounts with balances."""
     with get_db() as conn:
         rows = conn.execute("""
@@ -200,7 +227,10 @@ async def list_accounts():
 
 
 @app.get("/api/accounts/{account_id}", response_model=AccountResponse)
-async def get_account(account_id: str):
+async def get_account(
+    account_id: str,
+    _user: str = Depends(get_current_user),
+):
     """Get details for a specific account."""
     with get_db() as conn:
         row = conn.execute(
@@ -221,6 +251,7 @@ async def get_account(account_id: str):
 
 @app.get("/api/transactions", response_model=TransactionListResponse)
 async def list_transactions(
+    _user: str = Depends(get_current_user),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     account_id: Optional[str] = Query(None, description="Filter by account"),
@@ -287,6 +318,7 @@ async def list_transactions(
 
 @app.get("/api/transactions/summary", response_model=TransactionSummaryResponse)
 async def transaction_summary(
+    _user: str = Depends(get_current_user),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     account_id: Optional[str] = Query(None, description="Filter by account"),
@@ -337,6 +369,7 @@ async def transaction_summary(
 
 @app.get("/api/categories", response_model=CategoryListResponse)
 async def categories_summary(
+    _user: str = Depends(get_current_user),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     account_id: Optional[str] = Query(None, description="Filter by account"),
@@ -397,7 +430,9 @@ async def categories_summary(
 # ── Investments ──────────────────────────────────────────────────
 
 @app.get("/api/investments", response_model=InvestmentListResponse)
-async def list_investments():
+async def list_investments(
+    _user: str = Depends(get_current_user),
+):
     """List all investments."""
     with get_db() as conn:
         rows = conn.execute("""
@@ -421,7 +456,10 @@ async def list_investments():
 # ── Sync Log History ─────────────────────────────────────────────
 
 @app.get("/api/sync/logs")
-async def sync_logs(limit: int = Query(10, ge=1, le=100)):
+async def sync_logs(
+    _user: str = Depends(get_current_user),
+    limit: int = Query(10, ge=1, le=100),
+):
     """Get recent sync log entries."""
     with get_db() as conn:
         rows = conn.execute(

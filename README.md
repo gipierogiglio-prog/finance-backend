@@ -110,6 +110,47 @@ A API estará disponível em `http://localhost:8000`.
 |--------|------|-----------|
 | `GET` | `/api/investments` | Lista todos os investimentos |
 
+## Produção com Dokploy
+
+A API roda via Docker no Dokploy. As variáveis de ambiente são configuradas no dashboard do Dokploy.
+
+## Autenticação
+
+A API agora requer **autenticação JWT** para todos os endpoints, exceto `/api/status` e `/api/auth/login`.
+
+### Login
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
+```
+
+Resposta:
+```json
+{
+  "access_token": "eyJhbGci...",
+  "token_type": "bearer"
+}
+```
+
+### Usar token nos endpoints protegidos
+
+```bash
+curl http://localhost:8000/api/accounts \
+  -H "Authorization: Bearer eyJhbGci..."
+```
+
+### Variáveis de ambiente
+
+| Variável | Obrigatório | Descrição |
+|----------|-------------|-----------|
+| `API_USERNAME` | ❌ | Usuário (default: `admin`) |
+| `API_PASSWORD` | ❌ | Senha (default: `admin123`) |
+| `JWT_SECRET` | ❌ | Chave secreta JWT (default: gerada automaticamente) |
+
+> ⚠️ Em produção, **sempre** configure `API_PASSWORD` e `JWT_SECRET` com valores fortes.
+
 ## Exemplos de Uso
 
 ```bash
