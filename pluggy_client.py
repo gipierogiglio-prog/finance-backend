@@ -5,9 +5,12 @@ Reuses authentication and endpoint logic from the existing pluggy_sync.py script
 """
 
 import json
+import logging
 import os
 import time
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 from typing import Optional
 
 import httpx
