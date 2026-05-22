@@ -25,6 +25,7 @@ from auth import (
     verify_credentials,
     register_user,
     get_current_user,
+    get_current_user_optional,
 )
 from database import get_db, get_last_sync, get_user, init_db
 from models import (

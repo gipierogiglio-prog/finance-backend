@@ -119,6 +119,42 @@ def register_user(username: str, password: str, display_name: str = "") -> Optio
 # ── Dependency ───────────────────────────────────────────────────
 
 
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Optional[dict]:
+    """FastAPI dependency: extract and validate Bearer token or return None.
+
+    Returns the user dict with id and username on success.
+    Returns None if no token provided (no error raised).
+    """
+    if credentials is None:
+        return None
+
+    try:
+        token = credentials.credentials
+        parts = token.split(".")
+        if len(parts) != 2:
+            return None
+
+        enc_payload, enc_sig = parts
+        payload_bytes = base64.urlsafe_b64decode(enc_payload + "==")
+        payload = json.loads(payload_bytes)
+
+        expected_sig = _sign_payload(payload_bytes.decode("utf-8"))
+        if enc_sig != base64.urlsafe_b64encode(expected_sig.encode("utf-8")).decode("utf-8").rstrip("="):
+            return None
+
+        if payload.get("exp", 0) < time.time():
+            return None
+
+        return {
+            "id": payload.get("user_id", 1),
+            "username": payload.get("sub", "unknown"),
+        }
+    except Exception:
+        return None
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
