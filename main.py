@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
 
 # ── App ──────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Garrinha Finance API",
+    title="Garrinha Finance API v2",
     description="Backend financeiro para dashboard pessoal — dados via Pluggy/MeuPluggy (Open Finance Brasil)",
     version="1.0.0",
     lifespan=lifespan,
