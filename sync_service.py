@@ -90,15 +90,15 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
         init_db()
 
         with get_pluggy_client() as client:
-            # ── Ensure Item ────────────────────────────────────
+            # ── Get all Items ────────────────────────────────
             try:
-                item = client.ensure_item()
-                item_id = item["id"]
-                result.items_count = 1
-                logger.info(f"Using Item: {item_id}")
+                items = client.ensure_all_items()
+                if not items:
+                    raise PluggyItemNotReadyError("No items available")
+                result.items_count = len(items)
+                logger.info(f"Using {len(items)} Item(s)")
             except PluggyItemNotReadyError as e:
-                logger.warning(f"Item not ready: {e}")
-                # Extract OAuth URL from error message
+                logger.warning(f"Items not ready: {e}")
                 msg = str(e)
                 oauth_url = None
                 for part in msg.split():
@@ -108,69 +108,66 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
                 result.success = False
                 result.error_message = msg
                 result.oauth_url = oauth_url
-
-                # Still log the attempt
                 with get_db() as conn:
-                    log_sync(
-                        conn,
-                        status="WAITING_USER_INPUT",
-                        error_message=msg,
-                    )
+                    log_sync(conn, status="WAITING_USER_INPUT", error_message=msg)
                 return result
 
-            # ── Fetch Accounts ─────────────────────────────────
-            logger.info("Fetching accounts...")
-            accounts = client.list_accounts(item_id)
-            logger.info(f"Found {len(accounts)} accounts")
-
             total_transactions = 0
+            total_accounts = 0
+            total_investments = 0
+
+            date_to = datetime.now().strftime("%Y-%m-%d")
+            date_from = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
             with get_db() as conn:
-                for account in accounts:
-                    upsert_account(conn, account)
+                for item in items:
+                    item_id = item["id"]
+                    logger.info(f"Processing Item: {item_id}")
 
-                result.accounts_count = len(accounts)
-
-                # ── Fetch Transactions for each account ────────
-                date_to = datetime.now().strftime("%Y-%m-%d")
-                date_from = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-
-                for account in accounts:
-                    acc_id = account["id"]
+                    # ── Fetch Accounts ─────────────────────────
                     try:
-                        txs = client.get_transactions(acc_id, date_from, date_to)
-                        for tx in txs:
-                            upsert_transaction(conn, tx, acc_id)
-                        total_transactions += len(txs)
-                        logger.info(f"  Account {acc_id}: {len(txs)} transactions")
+                        accounts = client.list_accounts(item_id)
+                        logger.info(f"  Found {len(accounts)} accounts")
+                        for account in accounts:
+                            upsert_account(conn, account)
+                        total_accounts += len(accounts)
                     except Exception as e:
-                        logger.warning(f"  Account {acc_id}: error fetching transactions: {e}")
+                        logger.warning(f"  Error fetching accounts: {e}")
+                        accounts = []
 
+                    # ── Fetch Transactions ─────────────────────
+                    for account in accounts:
+                        acc_id = account["id"]
+                        try:
+                            txs = client.get_transactions(acc_id, date_from, date_to)
+                            for tx in txs:
+                                upsert_transaction(conn, tx, acc_id)
+                            total_transactions += len(txs)
+                            logger.info(f"  Account {acc_id}: {len(txs)} transactions")
+                        except Exception as e:
+                            logger.warning(f"  Account {acc_id}: error: {e}")
+
+                    # ── Fetch Investments ──────────────────────
+                    try:
+                        investments = client.list_investments(item_id)
+                        for inv in investments:
+                            upsert_investment(conn, inv, item_id)
+                        total_investments += len(investments)
+                        logger.info(f"  Found {len(investments)} investments")
+                    except Exception as e:
+                        logger.warning(f"  Error fetching investments: {e}")
+
+                result.accounts_count = total_accounts
                 result.transactions_count = total_transactions
+                result.investments_count = total_investments
 
-                # ── Fetch Investments ──────────────────────────
-                logger.info("Fetching investments...")
-                try:
-                    investments = client.list_investments(item_id)
-                    for inv in investments:
-                        upsert_investment(conn, inv, item_id)
-                    result.investments_count = len(investments)
-                    logger.info(f"Found {len(investments)} investments")
-                except Exception as e:
-                    logger.warning(f"Error fetching investments: {e}")
-
-                # ── Log sync success ───────────────────────────
-                log_sync(
-                    conn,
-                    status="SUCCESS",
-                    items_count=result.items_count,
+                log_sync(conn, status="SUCCESS", items_count=result.items_count,
                     accounts_count=result.accounts_count,
                     transactions_count=result.transactions_count,
-                    investments_count=result.investments_count,
-                )
+                    investments_count=result.investments_count)
 
             result.success = True
-            logger.info("Sync completed successfully")
+            logger.info(f"Sync done: {total_accounts} accounts, {total_transactions} transactions")
 
     except Exception as e:
         logger.error(f"Sync failed: {e}")

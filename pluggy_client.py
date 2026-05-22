@@ -238,6 +238,30 @@ class PluggyClient:
 
         return item
 
+    def ensure_all_items(self) -> list:
+        """
+        Return all saved Items.
+        Skips items that are WAITING_USER_INPUT or deleted.
+        """
+        saved = self.load_saved_items()
+        items = []
+        for s in saved:
+            try:
+                item = self.get_item(s["id"])
+                status = item.get("status")
+                if status == "UPDATED":
+                    items.append(item)
+                elif status == "WAITING_USER_INPUT":
+                    logger.warning(f"Item {s['id']} needs OAuth, skipping")
+                else:
+                    logger.info(f"Item {s['id']}: status={status}, skipping")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.warning(f"Item {s['id']} not found, skipping")
+                else:
+                    logger.warning(f"Item {s['id']}: error {e}, skipping")
+        return items
+
     # ── Data Fetching ────────────────────────────────────────────
 
     def list_accounts(self, item_id: str) -> list:

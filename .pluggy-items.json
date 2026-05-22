@@ -1,0 +1,9 @@
+{
+  "items": [
+    {"id": "6508316b-df02-4dab-a101-7343ce97db58", "connector": "MeuPluggy - Mercado Pago"},
+    {"id": "44c52e8d-0ed5-48a8-9014-70843e1b50c9", "connector": "MeuPluggy - Nubank"},
+    {"id": "b2a142ca-8285-4767-807a-53e38cbc512f", "connector": "MeuPluggy - Bradesco"},
+    {"id": "e8f76e87-ef26-4bd4-8d11-0e7f46e6d8b5", "connector": "MeuPluggy - BV"}
+  ],
+  "updated_at": "2026-05-22T01:05:00"
+}
