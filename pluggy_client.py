@@ -16,7 +16,7 @@ from typing import Optional
 import httpx
 
 PLUGGY_BASE_URL = "https://api.pluggy.ai"
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".pluggy-items.json")
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pluggy-items.json")
 
 # Rate limiting: max 10 req/s as per API docs
 RATE_LIMIT_DELAY = 0.15  # ~6 req/s to be safe
