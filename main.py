@@ -353,7 +353,9 @@ async def transaction_summary(
 
     total_income = row["total_income"]
     total_expenses = row["total_expenses"]
-    net_balance = total_income - total_expenses
+    # total_expenses is already negative (DEBITs stored as negative amounts)
+    # so we ADD them to get the correct net balance
+    net_balance = total_income + total_expenses
 
     return TransactionSummaryResponse(
         period_start=date.fromisoformat(date_from),
