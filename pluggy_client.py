@@ -63,6 +63,9 @@ class PluggyClient:
         })
         if resp.status_code == 401:
             raise PluggyAuthError("Invalid client credentials")
+        if resp.status_code >= 400:
+            detail = resp.text[:500]
+            raise PluggyAuthError(f"Pluggy API error: {detail}")
         resp.raise_for_status()
         return resp.json()["apiKey"]
 
