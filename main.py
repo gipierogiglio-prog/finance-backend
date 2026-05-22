@@ -116,10 +116,10 @@ app.add_middleware(
 
 @app.get("/api/status", response_model=SystemStatusResponse)
 async def get_status(
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_optional),
 ):
     """System status, database info, and last sync details."""
-    user_id = _user["id"]
+    user_id = _user["id"] if _user else 1
     last_sync = get_last_sync(user_id)
     last_sync_model = None
     if last_sync:
