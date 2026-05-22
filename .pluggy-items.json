@@ -1,9 +1,9 @@
 {
   "items": [
-    {"id": "6508316b-df02-4dab-a101-7343ce97db58", "connector": "MeuPluggy - Mercado Pago"},
-    {"id": "44c52e8d-0ed5-48a8-9014-70843e1b50c9", "connector": "MeuPluggy - Nubank"},
-    {"id": "b2a142ca-8285-4767-807a-53e38cbc512f", "connector": "MeuPluggy - Bradesco"},
-    {"id": "e8f76e87-ef26-4bd4-8d11-0e7f46e6d8b5", "connector": "MeuPluggy - BV"}
+    {"id": "6508316b-df02-4dab-a101-7343ce97db58", "connector": "Mercado Pago"},
+    {"id": "7430d85d-2bf8-49f8-a71f-04d89f93f1df", "connector": "Nubank"},
+    {"id": "abbef993-18a0-471a-8cb6-a7b9b7155bb7", "connector": "Bradesco"},
+    {"id": "6100a219-5af9-40ae-a844-a7a765133c7d", "connector": "BV"}
   ],
-  "updated_at": "2026-05-22T01:05:00"
+  "updated_at": "2026-05-22T01:15:00"
 }
