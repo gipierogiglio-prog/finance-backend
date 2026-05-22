@@ -135,6 +135,43 @@ class SyncTriggerResponse(BaseModel):
 
 # ── System Status ────────────────────────────────────────────────
 
+# ── User / Auth Models ────────────────────────────────────────
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    display_name: str = ""
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+
+
+class PluggyConfigRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+class PluggyConfigResponse(BaseModel):
+    configured: bool
+    has_item: bool
+
+
+class PluggyConfigInfo(BaseModel):
+    client_id: str = ""
+    configured: bool = False
+    has_item: bool = False
+
+
+class RegisterResponse(BaseModel):
+    message: str
+    user: UserResponse
+
+
+# ── System Status ────────────────────────────────────────────────
+
 class SystemStatusResponse(BaseModel):
     status: str = "ok"
     database: str

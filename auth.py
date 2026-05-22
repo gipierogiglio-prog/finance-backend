@@ -1,7 +1,9 @@
 """
-Authentication module — HMAC-based token auth (no external deps).
+Authentication module — HMAC-based token auth with bcrypt password hashing
+and multi-user support via the users table.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -10,8 +12,9 @@ import secrets
 import time
 from typing import Optional
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 # ── Config ───────────────────────────────────────────────────────
@@ -19,9 +22,6 @@ from pydantic import BaseModel
 _DEFAULT_SECRET = secrets.token_hex(32)
 SECRET_KEY = os.getenv("JWT_SECRET", _DEFAULT_SECRET).encode("utf-8")
 ACCESS_TOKEN_EXPIRE_HOURS = 24
-
-API_USERNAME = os.getenv("API_USERNAME", "admin")
-API_PASSWORD = os.getenv("API_PASSWORD", "admin123")
 
 security = HTTPBearer(auto_error=False)
 
@@ -39,6 +39,12 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+
+
 # ── Token helpers ────────────────────────────────────────────────
 
 
@@ -47,24 +53,67 @@ def _sign_payload(payload: str) -> str:
     return hmac.new(SECRET_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def create_access_token(username: str) -> str:
-    """Create a signed token with expiration (HMAC-based, no PyJWT)."""
+def create_access_token(user_id: int, username: str) -> str:
+    """Create a signed token with expiration (HMAC-based, no PyJWT).
+
+    Payload includes user_id and username for multi-user support.
+    """
     payload = json.dumps(
-        {"sub": username, "exp": int(time.time()) + ACCESS_TOKEN_EXPIRE_HOURS * 3600},
+        {
+            "sub": username,
+            "user_id": user_id,
+            "exp": int(time.time()) + ACCESS_TOKEN_EXPIRE_HOURS * 3600,
+        },
         separators=(",", ":"),
     )
     signature = _sign_payload(payload)
-    # Format: base64(payload).base64(signature)
-    import base64
 
     enc_payload = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8").rstrip("=")
     enc_sig = base64.urlsafe_b64encode(signature.encode("utf-8")).decode("utf-8").rstrip("=")
     return f"{enc_payload}.{enc_sig}"
 
 
-def verify_credentials(username: str, password: str) -> bool:
-    """Check username and password against env vars."""
-    return username == API_USERNAME and password == API_PASSWORD
+def verify_credentials(username: str, password: str) -> Optional[dict]:
+    """Check username and password against the users table with bcrypt.
+
+    Returns user dict on success (with id, username, display_name), None on failure.
+    """
+    from database import get_db, get_user_with_password_hash
+
+    with get_db() as conn:
+        user = get_user_with_password_hash(conn, username)
+        if user is None:
+            return None
+        try:
+            if bcrypt.checkpw(
+                password.encode("utf-8"), user["password_hash"].encode("utf-8")
+            ):
+                return {"id": user["id"], "username": user["username"], "display_name": user["display_name"]}
+        except Exception:
+            return None
+    return None
+
+
+def register_user(username: str, password: str, display_name: str = "") -> Optional[dict]:
+    """Register a new user with bcrypt-hashed password.
+
+    Returns the created user dict, or None if username already exists.
+    """
+    from database import get_db, get_user_by_username
+
+    with get_db() as conn:
+        existing = get_user_by_username(conn, username)
+        if existing:
+            return None
+
+        hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        conn.execute(
+            "INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)",
+            (username, hashed, display_name),
+        )
+        user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    return {"id": user_id, "username": username, "display_name": display_name}
 
 
 # ── Dependency ───────────────────────────────────────────────────
@@ -72,10 +121,10 @@ def verify_credentials(username: str, password: str) -> bool:
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> str:
+) -> dict:
     """FastAPI dependency: extract and validate Bearer token.
 
-    Returns the username (subject) from the token on success.
+    Returns a dict with 'id' (user_id) and 'username' on success.
     Raises 401 on missing, expired, or invalid tokens.
     """
     if credentials is None:
@@ -86,7 +135,6 @@ def get_current_user(
         )
 
     token = credentials.credentials
-    import base64
 
     try:
         parts = token.split(".")
@@ -112,7 +160,10 @@ def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        return payload.get("sub", "unknown")
+        return {
+            "id": payload.get("user_id", 1),
+            "username": payload.get("sub", "unknown"),
+        }
 
     except HTTPException:
         raise

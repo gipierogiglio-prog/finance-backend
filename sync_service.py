@@ -1,9 +1,10 @@
 """
 Sync service — orchestrates data sync from Pluggy to local database.
-Supports manual sync and can be scheduled via background task.
+Supports per-user sync with credentials stored in the users table.
 """
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ from typing import Optional
 
 from database import (
     get_db,
+    get_user,
     init_db,
     upsert_account,
     upsert_transaction,
@@ -18,7 +20,7 @@ from database import (
     log_sync,
     get_last_sync,
 )
-from pluggy_client import PluggyClient, PluggyItemNotReadyError
+from pluggy_client import PluggyClient, PluggyItemNotReadyError, PluggyNotConfiguredError
 
 logger = logging.getLogger(__name__)
 
@@ -62,43 +64,126 @@ class SyncResult:
         }
 
 
-def get_pluggy_client() -> PluggyClient:
-    """Create a PluggyClient with credentials from environment."""
-    client_id = os.getenv("PLUGGY_CLIENT_ID", "")
-    client_secret = os.getenv("PLUGGY_CLIENT_SECRET", "")
+def get_user_pluggy_credentials(user_id: int) -> dict:
+    """Get Pluggy credentials and items for a user from the database."""
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
 
-    if not client_id or not client_secret:
-        raise ValueError(
-            "PLUGGY_CLIENT_ID and PLUGGY_CLIENT_SECRET must be set in environment"
+        client_id = (user.get("pluggy_client_id") or "").strip()
+        client_secret = (user.get("pluggy_client_secret") or "").strip()
+
+        if not client_id or not client_secret:
+            raise PluggyNotConfiguredError(
+                "Configure seu MeuPluggy no dashboard (PUT /api/user/pluggy-config)"
+            )
+
+        items_raw = user.get("pluggy_items") or "[]"
+        if isinstance(items_raw, str):
+            items = json.loads(items_raw)
+        else:
+            items = items_raw
+
+        return {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "items": items,
+        }
+
+
+def save_user_items(user_id: int, items: list):
+    """Save items list to the user's pluggy_items field."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET pluggy_items = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), user_id),
         )
 
-    return PluggyClient(client_id=client_id, client_secret=client_secret)
+
+def merge_new_item(user_id: int, new_item: dict):
+    """Add or update an item in the user's items list."""
+    items_raw = None
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        if user:
+            raw = user.get("pluggy_items") or "[]"
+            if isinstance(raw, str):
+                items_raw = json.loads(raw)
+            else:
+                items_raw = raw
+
+    if items_raw is None:
+        items_raw = []
+
+    # Check if item already exists
+    found = False
+    for i, existing in enumerate(items_raw):
+        if existing.get("id") == new_item.get("id"):
+            items_raw[i] = {
+                "id": new_item["id"],
+                "connector": new_item.get("connector", {}).get("name", "MeuPluggy"),
+            }
+            found = True
+            break
+
+    if not found:
+        items_raw.append({
+            "id": new_item["id"],
+            "connector": new_item.get("connector", {}).get("name", "MeuPluggy"),
+        })
+
+    save_user_items(user_id, items_raw)
 
 
-def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
+def run_sync(user_id: int = 1, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
     """
-    Run a full sync: fetch accounts, transactions, investments from Pluggy
-    and save to local SQLite database.
+    Run a full sync for a specific user: fetch accounts, transactions, investments
+    from Pluggy and save to local SQLite database.
 
     This is a synchronous function. Run in a thread if called from async context.
     """
-    logger.info("Starting sync...")
+    logger.info(f"Starting sync for user_id={user_id}...")
     result = SyncResult()
 
     try:
         # Ensure database tables exist
         init_db()
 
-        with get_pluggy_client() as client:
+        # Get user's Pluggy credentials
+        creds = get_user_pluggy_credentials(user_id)
+        client_id = creds["client_id"]
+        client_secret = creds["client_secret"]
+        saved_items = creds["items"]
+
+        logger.info(f"User {user_id}: using Pluggy client_id={client_id[:8]}...")
+
+        with PluggyClient(client_id=client_id, client_secret=client_secret) as client:
             # ── Get all Items ────────────────────────────────
             try:
-                items = client.ensure_all_items()
+                items = client.ensure_all_items(saved_items)
                 if not items:
-                    raise PluggyItemNotReadyError("No items available")
+                    # If no saved items, try listing from API
+                    api_items = client.list_items()
+                    if api_items:
+                        # Save them for next time
+                        for api_item in api_items:
+                            merge_new_item(user_id, api_item)
+                        items = client.ensure_all_items([
+                            {"id": i["id"], "connector": i.get("connector", {}).get("name")}
+                            for i in api_items
+                        ])
+
+                if not items:
+                    # Try creating a new item
+                    new_item = client.ensure_item(saved_items)
+                    merge_new_item(user_id, new_item)
+                    items = [new_item]
+
                 result.items_count = len(items)
-                logger.info(f"Using {len(items)} Item(s)")
+                logger.info(f"User {user_id}: using {len(items)} Item(s)")
             except PluggyItemNotReadyError as e:
-                logger.warning(f"Items not ready: {e}")
+                logger.warning(f"User {user_id}: items not ready: {e}")
                 msg = str(e)
                 oauth_url = None
                 for part in msg.split():
@@ -109,7 +194,7 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
                 result.error_message = msg
                 result.oauth_url = oauth_url
                 with get_db() as conn:
-                    log_sync(conn, status="WAITING_USER_INPUT", error_message=msg)
+                    log_sync(conn, status="WAITING_USER_INPUT", error_message=msg, user_id=user_id)
                 return result
 
             total_transactions = 0
@@ -122,14 +207,14 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
             with get_db() as conn:
                 for item in items:
                     item_id = item["id"]
-                    logger.info(f"Processing Item: {item_id}")
+                    logger.info(f"User {user_id}: processing Item: {item_id}")
 
                     # ── Fetch Accounts ─────────────────────────
                     try:
                         accounts = client.list_accounts(item_id)
                         logger.info(f"  Found {len(accounts)} accounts")
                         for account in accounts:
-                            upsert_account(conn, account)
+                            upsert_account(conn, account, user_id=user_id)
                         total_accounts += len(accounts)
                     except Exception as e:
                         logger.warning(f"  Error fetching accounts: {e}")
@@ -151,7 +236,7 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
                     try:
                         investments = client.list_investments(item_id)
                         for inv in investments:
-                            upsert_investment(conn, inv, item_id)
+                            upsert_investment(conn, inv, item_id, user_id=user_id)
                         total_investments += len(investments)
                         logger.info(f"  Found {len(investments)} investments")
                     except Exception as e:
@@ -161,31 +246,44 @@ def run_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
                 result.transactions_count = total_transactions
                 result.investments_count = total_investments
 
-                log_sync(conn, status="SUCCESS", items_count=result.items_count,
+                log_sync(
+                    conn, status="SUCCESS", items_count=result.items_count,
                     accounts_count=result.accounts_count,
                     transactions_count=result.transactions_count,
-                    investments_count=result.investments_count)
+                    investments_count=result.investments_count,
+                    user_id=user_id,
+                )
 
             result.success = True
-            logger.info(f"Sync done: {total_accounts} accounts, {total_transactions} transactions")
+            logger.info(f"User {user_id}: sync done: {total_accounts} accounts, {total_transactions} transactions")
+
+    except PluggyNotConfiguredError as e:
+        logger.warning(f"User {user_id}: Pluggy not configured: {e}")
+        result.success = False
+        result.error_message = str(e)
+        try:
+            with get_db() as conn:
+                log_sync(conn, status="NOT_CONFIGURED", error_message=str(e), user_id=user_id)
+        except Exception:
+            pass
 
     except Exception as e:
-        logger.error(f"Sync failed: {e}")
+        logger.error(f"User {user_id}: sync failed: {e}")
         result.success = False
         result.error_message = str(e)
 
         try:
             with get_db() as conn:
-                log_sync(conn, status="ERROR", error_message=str(e))
+                log_sync(conn, status="ERROR", error_message=str(e), user_id=user_id)
         except Exception:
             pass
 
     return result
 
 
-def get_sync_status() -> dict:
-    """Get current sync status information."""
-    last_sync = get_last_sync()
+def get_sync_status(user_id: int = 1) -> dict:
+    """Get current sync status information for a user."""
+    last_sync = get_last_sync(user_id)
     now = datetime.now()
 
     if last_sync:
@@ -204,22 +302,47 @@ def get_sync_status() -> dict:
     }
 
 
+def run_sync_all_users(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> list:
+    """
+    Run sync for ALL users who have Pluggy configured.
+    Returns list of SyncResult dicts.
+    """
+    results = []
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM users WHERE pluggy_client_id != '' AND pluggy_client_secret != ''"
+        ).fetchall()
+        user_ids = [r["id"] for r in rows]
+
+    logger.info(f"Running sync for {len(user_ids)} user(s) with Pluggy configured")
+
+    for uid in user_ids:
+        try:
+            res = run_sync(user_id=uid, lookback_days=lookback_days)
+            results.append({"user_id": uid, "result": res.to_dict()})
+        except Exception as e:
+            logger.error(f"Sync failed for user {uid}: {e}")
+            results.append({"user_id": uid, "result": {"success": False, "error_message": str(e)}})
+
+    return results
+
+
 # ── Background Sync Task ─────────────────────────────────────────
 
 _sync_lock = asyncio.Lock()
 _background_task: Optional[asyncio.Task] = None
 
 
-async def run_async_sync(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
+async def run_async_sync(user_id: int = 1, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> SyncResult:
     """Run sync in a thread (since httpx is synchronous)."""
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, run_sync, lookback_days)
+    result = await loop.run_in_executor(None, run_sync, user_id, lookback_days)
     return result
 
 
 async def background_sync_loop(interval_hours: int = DEFAULT_SYNC_INTERVAL_HOURS):
     """
-    Background loop that runs sync periodically.
+    Background loop that runs sync for ALL users periodically.
     Only runs one sync at a time.
     """
     global _sync_lock
@@ -227,17 +350,16 @@ async def background_sync_loop(interval_hours: int = DEFAULT_SYNC_INTERVAL_HOURS
     while True:
         try:
             async with _sync_lock:
-                logger.info("Background sync: starting...")
-                result = await run_async_sync()
-                if result.success:
-                    logger.info(
-                        f"Background sync: OK ({result.accounts_count} accounts, "
-                        f"{result.transactions_count} transactions)"
-                    )
-                else:
-                    logger.warning(
-                        f"Background sync: FAILED - {result.error_message}"
-                    )
+                logger.info("Background sync: starting for all users...")
+                results = await asyncio.get_running_loop().run_in_executor(
+                    None, run_sync_all_users
+                )
+                success_count = sum(
+                    1 for r in results if r.get("result", {}).get("success")
+                )
+                logger.info(
+                    f"Background sync: {success_count}/{len(results)} users OK"
+                )
         except Exception as e:
             logger.error(f"Background sync: error - {e}")
 
