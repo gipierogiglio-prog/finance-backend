@@ -170,6 +170,25 @@ class RegisterResponse(BaseModel):
     user: UserResponse
 
 
+# ── Item (Pluggy Connection) Models ─────────────────────────────
+
+class AddItemRequest(BaseModel):
+    item_id: str
+    name: Optional[str] = None
+
+
+class ItemResponse(BaseModel):
+    id: str
+    item_id: str
+    name: str
+    status: str
+    created_at: datetime
+
+
+class ItemListResponse(BaseModel):
+    items: list[ItemResponse]
+
+
 # ── System Status ────────────────────────────────────────────────
 
 class SystemStatusResponse(BaseModel):

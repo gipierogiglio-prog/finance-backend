@@ -126,15 +126,10 @@ class PluggyClient:
 
     # ── Item Management ──────────────────────────────────────────
 
-    def list_items(self) -> list:
-        """List all Items from the API."""
-        resp = self._client.get(
-            "/items",
-            headers=self._headers() if self._api_key else {"X-API-KEY": self._get_api_key(), "Content-Type": "application/json"},
-        )
-        if resp.status_code == 200:
-            return resp.json().get("results", [])
-        return []
+    # NOTE: Pluggy intentionally does NOT provide a GET /items endpoint
+    # for security reasons. Items must be created via POST /items and
+    # the returned item ID must be stored by the client.
+    # See: https://docs.pluggy.ai/docs/item
 
     def get_item(self, item_id: str) -> dict:
         """Get a single Item by ID."""

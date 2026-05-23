@@ -28,13 +28,17 @@ from auth import (
     get_current_user_optional,
 )
 from database import get_db, get_last_sync, get_user, init_db
+from pluggy_client import PluggyClient
 from models import (
     AccountListResponse,
     AccountResponse,
+    AddItemRequest,
     CategoryListResponse,
     CategorySpending,
     InvestmentListResponse,
     InvestmentResponse,
+    ItemListResponse,
+    ItemResponse,
     PluggyConfigRequest,
     PluggyConfigResponse,
     RegisterResponse,
@@ -56,6 +60,7 @@ from sync_service import (
     get_user_pluggy_credentials,
     save_user_items,
     merge_new_item,
+    remove_user_item,
 )
 
 # ── Logger ───────────────────────────────────────────────────────
@@ -311,6 +316,162 @@ async def update_pluggy_config(
         )
 
     return {"message": "Configuração Pluggy salva com sucesso"}
+
+
+# ── Item Management ─────────────────────────────────────────────
+
+@app.get("/api/items", response_model=ItemListResponse)
+async def list_items(
+    _user: dict = Depends(get_current_user),
+):
+    """List all Pluggy items for the authenticated user."""
+    user_id = _user["id"]
+
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        items_raw = user.get("pluggy_items") or "[]"
+        if isinstance(items_raw, str):
+            items = json.loads(items_raw)
+        else:
+            items = items_raw
+
+    # Enrich each saved item with status from Pluggy API
+    enriched = []
+    try:
+        creds = get_user_pluggy_credentials(user_id)
+        with PluggyClient(
+            client_id=creds["client_id"], client_secret=creds["client_secret"]
+        ) as client:
+            for saved in items:
+                item_id = saved["id"]
+                name = saved.get("connector", "MeuPluggy")
+                try:
+                    pluggy_item = client.get_item(item_id)
+                    status = pluggy_item.get("status", "UNKNOWN")
+                except Exception as e:
+                    logger.warning(f"Item {item_id}: {e}")
+                    status = "ERROR"
+                enriched.append(
+                    ItemResponse(
+                        id=item_id,
+                        item_id=item_id,
+                        name=name,
+                        status=status,
+                        created_at=datetime.now(),
+                    )
+                )
+    except Exception:
+        # If Pluggy isn't configured or errors, return items without enrichment
+        for saved in items:
+            enriched.append(
+                ItemResponse(
+                    id=saved["id"],
+                    item_id=saved["id"],
+                    name=saved.get("connector", "MeuPluggy"),
+                    status="UNKNOWN",
+                    created_at=datetime.now(),
+                )
+            )
+
+    return ItemListResponse(items=enriched)
+
+
+@app.post("/api/items")
+async def add_item(
+    body: AddItemRequest,
+    _user: dict = Depends(get_current_user),
+):
+    """Add a new Pluggy Item ID to the user's account.
+
+    Validates the Item ID by making a GET /items/{item_id} call to Pluggy.
+    Requires Pluggy credentials to be configured first.
+    """
+    user_id = _user["id"]
+    item_id = body.item_id.strip()
+
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id é obrigatório")
+
+    # Get user credentials
+    try:
+        creds = get_user_pluggy_credentials(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Validate item exists on Pluggy
+    with PluggyClient(
+        client_id=creds["client_id"], client_secret=creds["client_secret"]
+    ) as client:
+        try:
+            pluggy_item = client.get_item(item_id)
+        except Exception as e:
+            logger.warning(f"Failed to validate item {item_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Item ID não encontrado na Pluggy ou erro de acesso: {e}",
+            )
+
+    # Check for duplicates
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        items_raw = user.get("pluggy_items") or "[]"
+        if isinstance(items_raw, str):
+            items = json.loads(items_raw)
+        else:
+            items = items_raw
+
+        for existing in items:
+            if existing.get("id") == item_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Item ID já cadastrado",
+                )
+
+        connector_name = body.name or pluggy_item.get("connector", {}).get("name", "MeuPluggy")
+        items.append({"id": item_id, "connector": connector_name})
+        save_user_items(user_id, items)
+
+    return {
+        "message": "Item adicionado com sucesso",
+        "item": {
+            "id": item_id,
+            "name": connector_name,
+            "status": pluggy_item.get("status", "UNKNOWN"),
+        },
+    }
+
+
+@app.delete("/api/items/{item_id}")
+async def delete_item(
+    item_id: str,
+    _user: dict = Depends(get_current_user),
+):
+    """Remove a Pluggy Item from the user's account."""
+    user_id = _user["id"]
+
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        items_raw = user.get("pluggy_items") or "[]"
+        if isinstance(items_raw, str):
+            items = json.loads(items_raw)
+        else:
+            items = items_raw
+
+        before = len(items)
+        items = [i for i in items if i.get("id") != item_id]
+
+        if len(items) == before:
+            raise HTTPException(status_code=404, detail="Item não encontrado")
+
+        save_user_items(user_id, items)
+
+    return {"message": "Item removido com sucesso", "item_id": item_id}
 
 
 # ── Accounts ─────────────────────────────────────────────────────

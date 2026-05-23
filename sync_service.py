@@ -160,42 +160,18 @@ def run_sync(user_id: int = 1, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> Sy
 
         with PluggyClient(client_id=client_id, client_secret=client_secret) as client:
             # ── Get all Items ────────────────────────────────
-            try:
-                items = client.ensure_all_items(saved_items)
-                if not items:
-                    # If no saved items, try listing from API
-                    api_items = client.list_items()
-                    if api_items:
-                        # Save them for next time
-                        for api_item in api_items:
-                            merge_new_item(user_id, api_item)
-                        items = client.ensure_all_items([
-                            {"id": i["id"], "connector": i.get("connector", {}).get("name")}
-                            for i in api_items
-                        ])
+            items = client.ensure_all_items(saved_items)
 
-                if not items:
-                    # Try creating a new item
-                    new_item = client.ensure_item(saved_items)
-                    merge_new_item(user_id, new_item)
-                    items = [new_item]
-
-                result.items_count = len(items)
-                logger.info(f"User {user_id}: using {len(items)} Item(s)")
-            except PluggyItemNotReadyError as e:
-                logger.warning(f"User {user_id}: items not ready: {e}")
-                msg = str(e)
-                oauth_url = None
-                for part in msg.split():
-                    if part.startswith("http"):
-                        oauth_url = part.strip(".")
-                        break
+            if not items:
+                logger.warning(f"User {user_id}: no working items found")
                 result.success = False
-                result.error_message = msg
-                result.oauth_url = oauth_url
+                result.error_message = "Nenhum Item disponível para sincronia. Adicione um Item ID no dashboard."
                 with get_db() as conn:
-                    log_sync(conn, status="WAITING_USER_INPUT", error_message=msg, user_id=user_id)
+                    log_sync(conn, status="NO_ITEMS", error_message="Nenhum Item ativo encontrado", user_id=user_id)
                 return result
+
+            result.items_count = len(items)
+            logger.info(f"User {user_id}: using {len(items)} Item(s)")
 
             total_transactions = 0
             total_accounts = 0
@@ -279,6 +255,23 @@ def run_sync(user_id: int = 1, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> Sy
             pass
 
     return result
+
+
+def remove_user_item(user_id: int, item_id: str):
+    """Remove an item from the user's pluggy_items list."""
+    with get_db() as conn:
+        user = get_user(conn, user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        items_raw = user.get("pluggy_items") or "[]"
+        if isinstance(items_raw, str):
+            items = json.loads(items_raw)
+        else:
+            items = items_raw
+
+        items = [i for i in items if i.get("id") != item_id]
+        save_user_items(user_id, items)
 
 
 def get_sync_status(user_id: int = 1) -> dict:
