@@ -11,16 +11,49 @@ variables:
 
 pool: Default
 
-steps:
-  - bash: |
-      echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
-      docker build -t ghcr.io/gipierogiglio-prog/finance-backend:latest .
-      docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
-    displayName: "Build & Push"
+stages:
+  - stage: Build
+    displayName: "🔨 Build & Validate"
+    jobs:
+      - job: BuildAndValidate
+        displayName: "Build & Security"
+        steps:
+          - bash: |
+              echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
+              docker build -t ghcr.io/gipierogiglio-prog/finance-backend:build-$(Build.BuildId) .
+            displayName: "Build Docker Image"
+          - bash: |
+              echo "✅ Build successful"
+            displayName: "Build Validation"
 
-  - bash: |
-      cd /opt/devgiglio
-      docker compose rm -fsv finance-backend 2>/dev/null || true
-      docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
-      docker compose up -d --force-recreate finance-backend
-    displayName: "Deploy"
+  - stage: Test
+    displayName: "🧪 Tests"
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: RunTests
+        displayName: "Run Tests"
+        steps:
+          - bash: |
+              echo "No automated tests configured yet"
+            displayName: "Test Suite (placeholder)"
+
+  - stage: Deploy
+    displayName: "🚀 Deploy"
+    dependsOn: Test
+    condition: succeeded()
+    jobs:
+      - job: PushAndDeploy
+        displayName: "Push & Deploy"
+        steps:
+          - bash: |
+              echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
+              docker tag ghcr.io/gipierogiglio-prog/finance-backend:build-$(Build.BuildId) ghcr.io/gipierogiglio-prog/finance-backend:latest
+              docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
+            displayName: "Push to GHCR"
+          - bash: |
+              cd /opt/devgiglio
+              docker compose rm -fsv finance-backend 2>/dev/null || true
+              docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
+              docker compose up -d --force-recreate finance-backend
+            displayName: "Deploy to VPS"
