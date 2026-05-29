@@ -13,16 +13,9 @@ pool: ubuntu-latest
 steps:
   - bash: |
       echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
-    displayName: "Login GHCR"
-
-  - task: Docker@2
-    displayName: "Build & Push"
-    inputs:
-      command: buildAndPush
-      Dockerfile: Dockerfile
-      containerRegistry: ""
-      repository: ghcr.io/gipierogiglio-prog/finance-backend
-      tags: latest
+      docker build -t ghcr.io/gipierogiglio-prog/finance-backend:latest .
+      docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
+    displayName: "Build, Login & Push"
 
   - task: SSH@0
     displayName: "Deploy via SSH"
