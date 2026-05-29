@@ -1,0 +1,16 @@
+name: devgiglio-finance-backend
+
+services:
+  finance-backend:
+    image: ghcr.io/gipierogiglio-prog/finance-backend:latest
+    container_name: devgiglio-finance-backend
+    restart: always
+    ports:
+      - "3007:8000"
+    networks:
+      - devgiglio-network
+
+
+networks:
+  devgiglio-network:
+    external: true
