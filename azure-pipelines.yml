@@ -1,0 +1,32 @@
+# Deploy finance-backend - Azure Pipelines
+trigger:
+  branches:
+    include: [main]
+
+variables:
+  - group: devgiglio-env
+  - group: devgiglio-secrets
+
+pool: ubuntu-latest
+steps:
+  - bash: |
+      echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
+    displayName: "Login GHCR"
+
+  - task: Docker@2
+    displayName: "Build & Push"
+    inputs:
+      command: buildAndPush
+      Dockerfile: Dockerfile
+      containerRegistry: ""
+      repository: ghcr.io/gipierogiglio-prog/finance-backend
+      tags: latest
+
+  - task: SSH@0
+    displayName: "Deploy via SSH"
+    inputs:
+      sshEndpoint: devgiglio-vps-ssh
+      runOptions: commands
+      commands: |
+        docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
+        docker service update --image ghcr.io/gipierogiglio-prog/finance-backend:latest app-parse-auxiliary-system-kq7ino
