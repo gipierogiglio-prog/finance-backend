@@ -9,7 +9,7 @@ variables:
   - name: APP_NAME
     value: finance-backend
 
-pool: devgiglio
+pool: Default
 
 steps:
   - bash: |
