@@ -13,6 +13,12 @@ pool: Default
 
 steps:
   - bash: |
+      echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
+      docker build -t ghcr.io/gipierogiglio-prog/finance-backend:latest .
+      docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
+    displayName: "Build & Push"
+
+  - bash: |
       cd /opt/devgiglio
       docker compose rm -fsv finance-backend 2>/dev/null || true
       docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
