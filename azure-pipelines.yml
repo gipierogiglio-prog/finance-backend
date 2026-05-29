@@ -9,7 +9,9 @@ variables:
   - name: APP_NAME
     value: finance-backend
 
-pool: ubuntu-latest
+pool:
+  vmImage: ubuntu-latest
+
 steps:
   - bash: |
       echo $(GITHUB_TOKEN) | docker login ghcr.io -u gipierogiglio-prog --password-stdin
