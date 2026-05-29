@@ -9,7 +9,7 @@ variables:
   - name: APP_NAME
     value: finance-backend
   - name: STACK
-    value: python
+    value: 
   - name: DEPLOY_ENABLED
     value: "true"
   - name: TEST_ENABLED
@@ -28,21 +28,21 @@ resources:
 pool: Default
 
 stages:
-  - template: stages/build/python-build.yml@templates
+  - template: stages/build/${stack}-build.yml@templates
     parameters:
-      appName: 
+      appName: $(APP_NAME)
 
-  - ${{ if eq(variables.TEST_ENABLED, "true") }}:
-    - template: stages/test/python-test.yml@templates
+  - ${{ if eq(variables.TEST_ENABLED, 'true') }}:
+    - template: stages/test/${stack}-test.yml@templates
       parameters:
-        appName: 
+        appName: $(APP_NAME)
 
-  - ${{ if eq(variables.DOCS_ENABLED, "true") }}:
+  - ${{ if eq(variables.DOCS_ENABLED, 'true') }}:
     - template: stages/docs/technical-doc.yml@templates
       parameters:
-        appName: 
+        appName: $(APP_NAME)
 
-  - ${{ if eq(variables.DEPLOY_ENABLED, "true") }}:
+  - ${{ if eq(variables.DEPLOY_ENABLED, 'true') }}:
     - template: stages/deploy/deploy-vps.yml@templates
       parameters:
-        appName: 
+        appName: $(APP_NAME)
