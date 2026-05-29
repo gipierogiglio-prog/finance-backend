@@ -9,8 +9,7 @@ variables:
   - name: APP_NAME
     value: finance-backend
 
-pool:
-  vmImage: ubuntu-latest
+pool: devgiglio
 
 steps:
   - bash: |
@@ -19,12 +18,8 @@ steps:
       docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
     displayName: "Build, Login & Push"
 
-  - task: SSH@0
-    displayName: "Deploy via SSH"
-    inputs:
-      sshEndpoint: devgiglio-vps-ssh
-      runOptions: commands
-      commands: |
-        cd /opt/devgiglio
-        docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
-        docker compose up -d --force-recreate finance-backend
+  - bash: |
+      cd /opt/devgiglio
+      docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
+      docker compose up -d --force-recreate finance-backend
+    displayName: "Deploy via Docker Compose"
