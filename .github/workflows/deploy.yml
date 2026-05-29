@@ -1,0 +1,33 @@
+name: Deploy finance-backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        run: |
+          docker build -t ghcr.io/gipierogiglio-prog/finance-backend:latest .
+          docker push ghcr.io/gipierogiglio-prog/finance-backend:latest
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 173.249.60.169
+          username: root
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            docker pull ghcr.io/gipierogiglio-prog/finance-backend:latest
+            docker service update --image ghcr.io/gipierogiglio-prog/finance-backend:latest app-parse-auxiliary-system-kq7ino
